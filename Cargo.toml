@@ -1,0 +1,18 @@
+[package]
+name = "k6r"
+version = "0.1.0"
+edition = "2021"
+description = "Convert K6 handleSummary JSON to Markdown reports"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+
+[profile.release]
+lto = true
+strip = true
+opt-level = "z"
+codegen-units = 1
+panic = "abort"
