@@ -28,7 +28,13 @@ k6r summary.json report.md
 k6r --help
 ```
 
-## K6 스크립트에서 JSON 출력
+## 지원 형식
+
+k6r은 입력 형식을 자동으로 감지합니다:
+
+### 1. handleSummary JSON (권장)
+
+K6 스크립트에 추가:
 
 ```javascript
 export function handleSummary(data) {
@@ -37,6 +43,16 @@ export function handleSummary(data) {
   };
 }
 ```
+
+### 2. JSONL 형식 (`--out json`)
+
+스크립트 수정 없이 사용 가능:
+
+```bash
+k6 run --out json=results.json script.js
+```
+
+**참고:** JSONL 형식은 원시 데이터 포인트에서 통계를 계산해야 합니다. 이 형식에서는 Checks 정보를 사용할 수 없습니다.
 
 ## 생성되는 리포트
 

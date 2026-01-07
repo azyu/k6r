@@ -28,7 +28,11 @@ k6r summary.json report.md
 k6r --help
 ```
 
-## Exporting JSON from K6
+## Supported Formats
+
+k6r automatically detects the input format:
+
+### 1. handleSummary JSON (recommended)
 
 Add this to your K6 script:
 
@@ -39,6 +43,16 @@ export function handleSummary(data) {
   };
 }
 ```
+
+### 2. JSONL format (`--out json`)
+
+No script modification needed:
+
+```bash
+k6 run --out json=results.json script.js
+```
+
+**Note:** JSONL format requires k6r to calculate statistics from raw data points. Checks information is not available in this format.
 
 ## Generated Report Sections
 
