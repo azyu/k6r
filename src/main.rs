@@ -747,3 +747,166 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Report generated: {}", output_path.display());
     Ok(())
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_duration() {
+        assert_eq!(format_duration(0.5), "500.00µs");
+        assert_eq!(format_duration(1.0), "1.00ms");
+        assert_eq!(format_duration(150.5), "150.50ms");
+        assert_eq!(format_duration(1500.0), "1.50s");
+        assert_eq!(format_duration(90000.0), "1.50m");
+    }
+
+    #[test]
+    fn test_format_count() {
+        assert_eq!(format_count(50.0), "50");
+        assert_eq!(format_count(1500.0), "1.50K");
+        assert_eq!(format_count(2500000.0), "2.50M");
+    }
+
+    #[test]
+    fn test_format_percent() {
+        assert_eq!(format_percent(0.0), "0.00%");
+        assert_eq!(format_percent(0.5), "50.00%");
+        assert_eq!(format_percent(1.0), "100.00%");
+    }
+
+    #[test]
+    fn test_percentile() {
+        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        assert_eq!(percentile(&values, 0.0), 1.0);
+        assert_eq!(percentile(&values, 50.0), 5.5);
+        assert_eq!(percentile(&values, 100.0), 10.0);
+    }
+
+    #[test]
+    fn test_percentile_empty() {
+        let values: Vec<f64> = vec![];
+        assert_eq!(percentile(&values, 50.0), 0.0);
+    }
+
+    #[test]
+    fn test_percentile_single() {
+        let values = vec![42.0];
+        assert_eq!(percentile(&values, 50.0), 42.0);
+        assert_eq!(percentile(&values, 95.0), 42.0);
+    }
+
+    #[test]
+    fn test_calculate_stats_trend() {
+        let values = vec![100.0, 200.0, 300.0, 400.0, 500.0];
+        let stats = calculate_stats(&values, MetricType::Trend);
+
+        assert_eq!(stats.get("avg"), Some(&300.0));
+        assert_eq!(stats.get("min"), Some(&100.0));
+        assert_eq!(stats.get("max"), Some(&500.0));
+        assert_eq!(stats.get("med"), Some(&300.0));
+    }
+
+    #[test]
+    fn test_calculate_stats_counter() {
+        let values = vec![1.0, 1.0, 1.0, 1.0, 1.0];
+        let stats = calculate_stats(&values, MetricType::Counter);
+
+        assert_eq!(stats.get("count"), Some(&5.0));
+        assert!(stats.get("rate").is_some());
+    }
+
+    #[test]
+    fn test_calculate_stats_rate() {
+        let values = vec![1.0, 1.0, 1.0, 0.0, 0.0]; // 3 passes, 2 fails
+        let stats = calculate_stats(&values, MetricType::Rate);
+
+        assert_eq!(stats.get("passes"), Some(&3.0));
+        assert_eq!(stats.get("fails"), Some(&2.0));
+        assert_eq!(stats.get("rate"), Some(&0.6)); // 3/5 = 0.6
+    }
+
+    #[test]
+    fn test_detect_format_handle_summary() {
+        let content = r#"{"metrics":{"http_reqs":{"type":"counter"}}}"#;
+        assert!(matches!(detect_format(content), FileFormat::HandleSummary));
+    }
+
+    #[test]
+    fn test_detect_format_jsonl() {
+        let content = r#"{"type":"Metric","metric":"http_reqs","data":{}}
+{"type":"Point","metric":"http_reqs","data":{"value":1}}"#;
+        assert!(matches!(detect_format(content), FileFormat::Jsonl));
+    }
+
+    #[test]
+    fn test_parse_jsonl_basic() {
+        let content = r#"{"type":"Metric","data":{"type":"trend","contains":"time","thresholds":[]},"metric":"http_req_duration"}
+{"type":"Point","data":{"time":"2024-01-01T10:00:00.000+00:00","value":100.0,"tags":null},"metric":"http_req_duration"}
+{"type":"Point","data":{"time":"2024-01-01T10:00:01.000+00:00","value":200.0,"tags":null},"metric":"http_req_duration"}"#;
+
+        let summary = parse_jsonl(content);
+
+        assert!(summary.metrics.contains_key("http_req_duration"));
+        let metric = summary.metrics.get("http_req_duration").unwrap();
+        assert_eq!(metric.metric_type, MetricType::Trend);
+        assert_eq!(metric.values.get("avg"), Some(&150.0));
+        assert_eq!(metric.values.get("min"), Some(&100.0));
+        assert_eq!(metric.values.get("max"), Some(&200.0));
+    }
+
+    #[test]
+    fn test_parse_handle_summary() {
+        let content = r#"{
+            "metrics": {
+                "http_reqs": {
+                    "type": "counter",
+                    "contains": "default",
+                    "values": {"count": 100, "rate": 10.0},
+                    "thresholds": {}
+                }
+            }
+        }"#;
+
+        let summary: K6Summary = serde_json::from_str(content).unwrap();
+
+        assert!(summary.metrics.contains_key("http_reqs"));
+        let metric = summary.metrics.get("http_reqs").unwrap();
+        assert_eq!(metric.metric_type, MetricType::Counter);
+        assert_eq!(metric.values.get("count"), Some(&100.0));
+    }
+
+    #[test]
+    fn test_generate_report_not_empty() {
+        let mut metrics = HashMap::new();
+        metrics.insert(
+            "http_reqs".to_string(),
+            Metric {
+                metric_type: MetricType::Counter,
+                contains: "default".to_string(),
+                values: [("count".to_string(), 100.0), ("rate".to_string(), 10.0)]
+                    .into_iter()
+                    .collect(),
+                thresholds: HashMap::new(),
+            },
+        );
+
+        let summary = K6Summary {
+            metrics,
+            root_group: None,
+            state: Some(State {
+                test_run_duration_ms: 10000.0,
+            }),
+        };
+
+        let report = generate_report(&summary);
+
+        assert!(report.contains("# K6 Load Test Report"));
+        assert!(report.contains("10.00s"));
+        assert!(report.contains("100"));
+    }
+}
